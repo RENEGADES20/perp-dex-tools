@@ -174,10 +174,10 @@ class GrvtInternalHedgeBot:
         # Load the environment file
         self.load_env_file(env_path)
 
-        # Get GRVT credentials from environment
-        trading_account_id = os.getenv('GRVT_TRADING_ACCOUNT_ID')
-        private_key = os.getenv('GRVT_PRIVATE_KEY')
-        api_key = os.getenv('GRVT_API_KEY')
+        # Get GRVT credentials from environment and strip quotes if present
+        trading_account_id = os.getenv('GRVT_TRADING_ACCOUNT_ID', '').strip('"').strip("'")
+        private_key = os.getenv('GRVT_PRIVATE_KEY', '').strip('"').strip("'")
+        api_key = os.getenv('GRVT_API_KEY', '').strip('"').strip("'")
 
         if not all([trading_account_id, private_key, api_key]):
             raise ValueError(f"GRVT credentials missing in {env_path}")
