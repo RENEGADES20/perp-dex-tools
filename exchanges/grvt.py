@@ -370,6 +370,9 @@ class GrvtClient(BaseExchangeClient):
             else:
                 raise Exception(f"[OPEN] Unexpected order status: {order_status}")
 
+        # If we exit the loop without returning, all attempts failed
+        return OrderResult(success=False, error_message=f'Failed to place order after {attempt} attempts')
+
     async def place_close_order(self, contract_id: str, quantity: Decimal, price: Decimal, side: str) -> OrderResult:
         """Place a close order with GRVT."""
         # Get current market prices

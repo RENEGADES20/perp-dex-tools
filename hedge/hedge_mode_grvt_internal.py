@@ -72,12 +72,14 @@ class GrvtInternalHedgeBot:
         # Disable root logger propagation to prevent external logs
         logging.getLogger().setLevel(logging.CRITICAL)
 
-        # Create file handler
-        file_handler = logging.FileHandler(self.log_filename)
+        # Create file handler with UTF-8 encoding
+        file_handler = logging.FileHandler(self.log_filename, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
 
-        # Create console handler
-        console_handler = logging.StreamHandler(sys.stdout)
+        # Create console handler with UTF-8 encoding for Windows compatibility
+        import io
+        utf8_stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        console_handler = logging.StreamHandler(utf8_stdout)
         console_handler.setLevel(logging.INFO)
 
         # Create different formatters for file and console
@@ -249,6 +251,9 @@ class GrvtInternalHedgeBot:
             quantity=quantity,
             direction=side.lower()
         )
+
+        if order_result is None:
+            raise Exception(f"Failed to place main order: place_open_order returned None (max retries exceeded or order rejected)")
 
         if not order_result.success:
             raise Exception(f"Failed to place main order: {order_result.error_message}")
