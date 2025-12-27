@@ -29,12 +29,20 @@ class Config:
 class GrvtInternalHedgeBot:
     """Trading bot that places post-only orders on main GRVT account and hedges with market orders on sub GRVT account."""
 
-    def __init__(self, ticker: str, order_quantity: Decimal, main_env_path: str, sub_env_path: str, iterations: int = 1):
+    def __init__(self, ticker: str, order_quantity: Decimal, main_env_path: str, sub_env_path: str,
+                 iterations: int = 1, continuous: bool = False, hold_time: int = 10, wait_time: int = 5):
         self.ticker = ticker
         self.order_quantity = order_quantity
         self.main_env_path = main_env_path
         self.sub_env_path = sub_env_path
         self.iterations = iterations
+        self.continuous = continuous  # 持续运行模式
+        self.hold_time = hold_time  # 持仓时间（秒）
+        self.wait_time = wait_time  # 每次循环间隔时间（秒）
+
+        # 统计信息
+        self.total_cycles = 0  # 总循环次数
+        self.total_volume = Decimal('0')  # 总交易量
 
         # Initialize logging to file
         os.makedirs("logs", exist_ok=True)
@@ -429,8 +437,8 @@ class GrvtInternalHedgeBot:
 
     async def close_position(self, side: str):
         """Close positions on both accounts."""
-        self.logger.info(f"💤 Waiting 10 seconds before closing position...")
-        await asyncio.sleep(10)
+        self.logger.info(f"💤 Holding position for {self.hold_time} seconds...")
+        await asyncio.sleep(self.hold_time)
 
         self.logger.info(f"📊 Closing positions...")
 
@@ -505,10 +513,31 @@ class GrvtInternalHedgeBot:
 
         # Trading iterations
         iteration = 0
-        while iteration < self.iterations and not self.stop_flag:
+        current_side = 'buy'  # 开始方向，之后会交替
+
+        # 显示运行模式
+        if self.continuous:
+            self.logger.info("📊 Running in CONTINUOUS mode - Press Ctrl+C to stop")
+            self.logger.info(f"⚙️ Settings: hold_time={self.hold_time}s, wait_time={self.wait_time}s")
+        else:
+            self.logger.info(f"📊 Running {self.iterations} iterations")
+            self.logger.info(f"⚙️ Settings: hold_time={self.hold_time}s, wait_time={self.wait_time}s")
+
+        # 主循环：持续模式下无限循环，否则按迭代次数
+        while not self.stop_flag:
+            # 检查是否达到迭代次数限制（仅在非持续模式下）
+            if not self.continuous and iteration >= self.iterations:
+                break
+
             iteration += 1
+            self.total_cycles += 1
+
             self.logger.info("=" * 60)
-            self.logger.info(f"🔄 Trading iteration {iteration}/{self.iterations}")
+            if self.continuous:
+                self.logger.info(f"🔄 Cycle {iteration} | Total Volume: {self.total_volume} {self.ticker}")
+            else:
+                self.logger.info(f"🔄 Cycle {iteration}/{self.iterations} | Total Volume: {self.total_volume} {self.ticker}")
+            self.logger.info(f"📈 Current Direction: {current_side.upper()}")
             self.logger.info("=" * 60)
 
             try:
@@ -518,28 +547,49 @@ class GrvtInternalHedgeBot:
                 self.waiting_for_sub_fill = False
 
                 # 1. Place post-only order on main account (maker)
-                side = 'buy'  # You can change this or make it configurable
-                await self.place_main_post_only_order(side, self.order_quantity)
+                await self.place_main_post_only_order(current_side, self.order_quantity)
 
                 # 2. Wait for main order to fill and then hedge with sub account
                 if self.waiting_for_sub_fill:
                     # Determine hedge side (opposite of main order)
-                    hedge_side = 'sell' if side.lower() == 'buy' else 'buy'
+                    hedge_side = 'sell' if current_side.lower() == 'buy' else 'buy'
 
                     # Place market order on sub account (taker)
                     await self.place_sub_market_order(hedge_side, self.current_main_filled_size)
 
-                # 3. Wait 10 seconds and close positions
-                await self.close_position(side)
+                    # 更新总交易量（双边都算）
+                    self.total_volume += self.current_main_filled_size * 2
 
-                self.logger.info(f"✅ Iteration {iteration} completed")
+                # 3. Hold position and then close
+                await self.close_position(current_side)
+
+                self.logger.info(f"✅ Cycle {iteration} completed")
+
+                # 交替方向：buy <-> sell
+                current_side = 'sell' if current_side == 'buy' else 'buy'
+
+                # 等待间隔时间再进行下一次循环
+                if self.wait_time > 0 and not self.stop_flag:
+                    if self.continuous or iteration < self.iterations:
+                        self.logger.info(f"⏳ Waiting {self.wait_time}s before next cycle...")
+                        await asyncio.sleep(self.wait_time)
 
             except Exception as e:
-                self.logger.error(f"⚠️ Error in trading iteration {iteration}: {e}")
+                self.logger.error(f"⚠️ Error in cycle {iteration}: {e}")
                 self.logger.error(f"⚠️ Full traceback: {traceback.format_exc()}")
-                break
+                if not self.continuous:
+                    break
+                else:
+                    # 持续模式下出错后等待一段时间再继续
+                    self.logger.info(f"⏳ Error occurred, waiting 30s before retry...")
+                    await asyncio.sleep(30)
 
-        self.logger.info(f"🎉 Trading completed - {iteration} iterations")
+        # 最终统计
+        self.logger.info("=" * 60)
+        self.logger.info(f"🎉 Trading completed!")
+        self.logger.info(f"📊 Total Cycles: {self.total_cycles}")
+        self.logger.info(f"📊 Total Volume: {self.total_volume} {self.ticker}")
+        self.logger.info("=" * 60)
 
     async def run(self):
         """Run the hedge bot."""
@@ -582,7 +632,13 @@ def parse_arguments():
                         default=r'F:\perp_tools\perp-dex-tools\account2.env',
                         help='Path to sub account .env file')
     parser.add_argument('--iter', type=int, default=1,
-                        help='Number of iterations to run (default: 1)')
+                        help='Number of iterations to run (ignored if --continuous is set) (default: 1)')
+    parser.add_argument('--continuous', action='store_true',
+                        help='Run continuously until stopped (Ctrl+C to stop)')
+    parser.add_argument('--hold-time', type=int, default=10,
+                        help='Seconds to hold position before closing (default: 10)')
+    parser.add_argument('--wait-time', type=int, default=5,
+                        help='Seconds to wait between cycles (default: 5)')
 
     return parser.parse_args()
 
@@ -597,7 +653,10 @@ def main():
         order_quantity=Decimal(args.size),
         main_env_path=args.main_env,
         sub_env_path=args.sub_env,
-        iterations=args.iter
+        iterations=args.iter,
+        continuous=args.continuous,
+        hold_time=args.hold_time,
+        wait_time=args.wait_time
     )
 
     # Run the bot
