@@ -189,7 +189,8 @@ class GrvtInternalHedgeBot:
             'quantity': self.order_quantity,
             'tick_size': Decimal('0.01'),  # Will be updated when we get contract info
             'close_order_side': 'sell',  # Default
-            'direction': 'buy'  # Default
+            'direction': 'buy',  # Default direction, not used in our implementation
+            'log_to_console': True  # Enable console logging for debugging
         }
 
         # Wrap in Config class for GRVT client
@@ -243,7 +244,15 @@ class GrvtInternalHedgeBot:
 
         self.main_order_status = None
         self.main_order_filled = False
-        self.logger.info(f"[MAIN] [OPEN] [{side}] Placing GRVT POST-ONLY order: {quantity}")
+
+        # Get current best bid/ask for logging
+        try:
+            best_bid, best_ask = await self.fetch_grvt_bbo_prices(self.main_client, self.main_contract_id)
+            self.logger.info(f"[MAIN] [OPEN] [{side}] Current BBO: bid={best_bid}, ask={best_ask}")
+            self.logger.info(f"[MAIN] [OPEN] [{side}] Placing GRVT POST-ONLY order: {quantity}")
+        except Exception as e:
+            self.logger.warning(f"[MAIN] Could not fetch BBO: {e}")
+            self.logger.info(f"[MAIN] [OPEN] [{side}] Placing GRVT POST-ONLY order: {quantity}")
 
         # Place the order
         order_result = await self.main_client.place_open_order(
