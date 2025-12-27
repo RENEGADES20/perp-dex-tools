@@ -269,6 +269,9 @@ class GrvtClient(BaseExchangeClient):
         if not order_result:
             raise Exception(f"[OPEN] Error placing order")
 
+        # Log the raw order result for debugging
+        self.logger.log(f"[OPEN] Raw order result status: {order_result.get('state', {}).get('status')}, metadata: {order_result.get('metadata', {})}", "INFO")
+
         client_order_id = order_result.get('metadata').get('client_order_id')
         order_status = order_result.get('state').get('status')
         order_status_start_time = time.time()
@@ -345,7 +348,12 @@ class GrvtClient(BaseExchangeClient):
                 raise Exception(f"[OPEN] Invalid direction: {direction}")
 
             # Round price to tick size to ensure it meets exchange requirements
+            price_before_round = order_price
             order_price = self.round_to_tick(order_price)
+
+            if attempt == 1:  # Log on first attempt only
+                self.logger.log(f"[OPEN] Calculated price: {price_before_round} -> rounded: {order_price}", "INFO")
+                self.logger.log(f"[OPEN] BBO: {best_bid}/{best_ask}, tick_size: {self.config.tick_size}", "INFO")
 
             # Place the order using GRVT SDK
             try:
@@ -358,6 +366,10 @@ class GrvtClient(BaseExchangeClient):
             order_id = order_info.order_id
 
             if order_status == 'REJECTED':
+                self.logger.log(f"[OPEN] Order REJECTED - Attempt {attempt}/15", "ERROR")
+                self.logger.log(f"[OPEN] Price: {order_price}, BBO: {best_bid}/{best_ask}, Spread: {best_ask-best_bid}, Tick: {self.config.tick_size}", "ERROR")
+                self.logger.log(f"[OPEN] Quantity: {quantity}, Direction: {direction}", "ERROR")
+                self.logger.log(f"[OPEN] Full order_info: {order_info}", "ERROR")
                 continue
             if order_status in ['OPEN', 'FILLED']:
                 return OrderResult(
