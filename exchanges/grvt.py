@@ -344,6 +344,9 @@ class GrvtClient(BaseExchangeClient):
             else:
                 raise Exception(f"[OPEN] Invalid direction: {direction}")
 
+            # Round price to tick size to ensure it meets exchange requirements
+            order_price = self.round_to_tick(order_price)
+
             # Place the order using GRVT SDK
             try:
                 order_info = await self.place_post_only_order(contract_id, quantity, order_price, direction)
